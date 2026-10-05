@@ -1,0 +1,11 @@
+# 编译产物
+bin/
+build_dir/
+staging_dir/
+tmp/
+logs/
+wrt/
+upload/
+*.ipk
+*.img
+*.img.gz
