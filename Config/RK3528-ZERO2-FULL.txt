@@ -12,42 +12,47 @@ CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_friendlyarm_nanopi-zero2=y
 # 因此: 不引入 kmod-r8169(RTL8111H 专用) / kmod-aic8800-sdio(板载WiFi专用)
 #=====================================================================
 
-#WiFi: Zero2 的 M.2 Key-E 走 PCIe, 上游设备定义已带 kmod-rtw88-8822ce
-#(对应 RTL8822CE M.2 模块; 若确认不插 WiFi 模块可注释掉以省体积)
-CONFIG_PACKAGE_kmod-rtw88-8822ce=y
-CONFIG_PACKAGE_wpad-openssl=y
-CONFIG_PACKAGE_wifi-scripts=y
+#WiFi: 不接无线模块, 不编任何 WiFi 驱动/固件/管理组件(用户明确要求)
+#说明: Zero2 的 WiFi 走 M.2 Key-E(PCIe), 需自插模块; 本固件不使用无线,
+#      故上游设备定义默认带的 kmod-rtw88-8822ce / wpad-openssl / wifi-scripts 全部不编.
+#      注意: 若后续要用 LuCI 管理, 仍需 luci 本体(已在 GENERAL.txt 里), 但不会有"无线"菜单.
+CONFIG_PACKAGE_kmod-rtw88-8822ce=n
+CONFIG_PACKAGE_wpad-openssl=n
+CONFIG_PACKAGE_wifi-scripts=n
+#确保无线相关组件不被间接拉起
+CONFIG_PACKAGE_wpad-basic-mbedtls=n
+CONFIG_PACKAGE_wpad-basic-openssl=n
+CONFIG_PACKAGE_wpad-full-mbedtls=n
+CONFIG_PACKAGE_wpad-full-openssl=n
+CONFIG_PACKAGE_kmod-cfg80211=n
+CONFIG_PACKAGE_kmod-mac80211=n
+CONFIG_PACKAGE_kmod-nl80211=n
+CONFIG_PACKAGE_iw=n
+CONFIG_PACKAGE_iwinfo=n
 
 #分区: boot 128MB(内核+dtb) / rootfs 1024MB
 CONFIG_TARGET_KERNEL_PARTSIZE=128
 CONFIG_TARGET_ROOTFS_PARTSIZE=1024
 CONFIG_TARGET_ROOTFS_EXT4FS=n
 
-#科学插件: passwall + xray-core (与 R28S 同方案)
-CONFIG_PACKAGE_luci-app-passwall=y
-CONFIG_PACKAGE_xray-core=y
-CONFIG_PACKAGE_ipt2socks=y
-CONFIG_PACKAGE_firewall4=y
+#科学插件: Open-Box (sing-box 一体化方案, 运行时 curl 安装, 非编译期软件包)
+#说明: Open-Box 不属于 OpenWrt 软件包, 面板与 sing-box 内核由安装脚本自带,
+#      因此固件侧【不编】passwall/xray 等代理软件包, 只预置其运行依赖.
+#安装命令(root SSH):
+#  curl -fsSL https://raw.githubusercontent.com/liandu2024/Open-Box/main/scripts/install.sh | sh
+#国内网络不畅时改用镜像:
+#  curl -fsSL https://gh-proxy.com/raw.githubusercontent.com/liandu2024/Open-Box/main/scripts/install.sh | sh -s -- --mirror
+#默认面板端口 3036, 浏览器打开 http://<路由器IP>:3036
+#--------------------------------------------------------------------
+#Open-Box 运行依赖(按项目 README 列出的依赖清单):
+#  kmod-tun / kmod-nft-queue / kmod-nft-nat / kmod-veth / ip-full / ca-bundle
 CONFIG_PACKAGE_kmod-tun=y
 CONFIG_PACKAGE_kmod-nft-queue=y
-CONFIG_PACKAGE_kmod-inet-diag=y
-CONFIG_PACKAGE_kmod-netlink-diag=y
-CONFIG_PACKAGE_curl=y
-CONFIG_PACKAGE_unzip=y
-CONFIG_PACKAGE_ucode-mod-digest=y
-CONFIG_PACKAGE_ucode-mod-math=y
-#PassWall 可选组件: 只留 xray, 其余全关
-CONFIG_PACKAGE_luci-app-passwall_INCLUDE_SingBox=n
-CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Geoview=n
-CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Haproxy=n
-CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Hysteria=n
-CONFIG_PACKAGE_luci-app-passwall_INCLUDE_NaiveProxy=n
-CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Shadow_TLS=n
-CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Shadowsocks_Rust_Client=n
-CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Shadowsocks_Rust_Server=n
-CONFIG_PACKAGE_luci-app-passwall_INCLUDE_ShadowsocksR_Libev_Client=n
-CONFIG_PACKAGE_luci-app-passwall_INCLUDE_ShadowsocksR_Libev_Server=n
-CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Simple_Obfs=n
-CONFIG_PACKAGE_luci-app-passwall_INCLUDE_V2ray_Geodata=n
-CONFIG_PACKAGE_luci-app-passwall_INCLUDE_V2ray_Plugin=n
-CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Xray_Plugin=n
+CONFIG_PACKAGE_kmod-nft-nat=y
+CONFIG_PACKAGE_kmod-veth=y
+CONFIG_PACKAGE_ip-full=y
+CONFIG_PACKAGE_ca-bundle=y
+#nftables 基础(Open-Box 用 nft 做入口旁路与 DNS 劫持)
+CONFIG_PACKAGE_nftables-json=y
+CONFIG_PACKAGE_kmod-nf-nathelper=y
+CONFIG_PACKAGE_kmod-nf-nathelper-extra=y
