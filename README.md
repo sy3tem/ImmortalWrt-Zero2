@@ -23,8 +23,13 @@ NanoPi Zero2（RK3528A）的 ImmortalWrt 主线云编译仓库，GitHub Actions 
 - **本仓库只补**：`board.d` 网口 + LED 映射（`Scripts/Inject-ZERO2.sh`）
 - **U-Boot**：主线 `nanopi-zero2-rk3528`，**在 Linux 启动前释放 RGMII PHY 复位**
   （这是千兆网能工作的前提；官方 wiki 的 u-boot 2017.09 反而是老路子）
-- **代理**：passwall + xray-core
-- **附加**：argon 主题、iStore、dockerman、ttyd、turboacc 等（见 `Config/GENERAL.txt`）
+- **代理**：**Open-Box**（[liandu2024/Open-Box](https://github.com/liandu2024/Open-Box)，sing-box 一体化方案）
+  - Open-Box **不是编译期软件包**，面板 + sing-box 内核 + Node 运行时由安装脚本自带
+  - 固件侧只预置运行依赖：`kmod-tun` `kmod-veth` `kmod-nft-nat` `kmod-nft-queue` `kmod-nf-nathelper` `ip-full` `ca-bundle`
+  - 固件**不含** passwall / xray / iStore
+- **无线**：**不编任何 WiFi 驱动**（Zero2 的 M.2 Key-E 不接模块）
+- **形态**：**旁路由**（相关设置需自行配置，固件不预置）
+- **附加**：argon 主题、dockerman、ttyd、turboacc 等（见 `Config/GENERAL.txt`）
 
 > **为什么不用官方固件里的 loader？**
 > 官方只提供 u-boot 2017.09。本方案全程使用上游源码自编译，
@@ -59,6 +64,36 @@ NanoPi Zero2（RK3528A）的 ImmortalWrt 主线云编译仓库，GitHub Actions 
   └─ SoC 内部固化协议，任何存储写坏都能救
 ```
 
+## 安装 Open-Box
+
+刷完固件后，SSH 以 root 登录路由器执行：
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/liandu2024/Open-Box/main/scripts/install.sh | sh
+```
+
+国内网络不畅时用镜像：
+
+```sh
+curl -fsSL https://gh-proxy.com/raw.githubusercontent.com/liandu2024/Open-Box/main/scripts/install.sh | sh -s -- --mirror
+```
+
+- 安装时会问面板端口，默认 **3036**（回车即可）
+- 完成后浏览器打开 `http://<路由器IP>:3036`，首次访问设置面板密码
+- 忘记密码：SSH 执行 `open-box` 选 `1`，或直接 `open-box password`
+
+## ⚠️ 旁路由必读
+
+作为旁路由使用时（终端网关 / DNS 指向本机），**必须打开 LAN 区域的「IP 动态伪装」（MASQUERADE）**。
+
+> 否则直连站点的回包不经旁路由、连接对不上，表现为
+> **只能上国外、打不开大陆网站**。
+
+LuCI 路径：网络 → 防火墙 → 区域 → lan → 勾选「IP 动态伪装」→ 保存应用。
+
+本固件**不预置**旁路由参数（LAN 静态 IP、关 DHCP、masquerade 等），需自行配置。
+
+
 **唯一不可逆的是写 OTP 熔丝**——正常刷机流程不会碰到。
 
 - 默认登录：`192.168.10.1` / root / `password`
@@ -67,7 +102,7 @@ NanoPi Zero2（RK3528A）的 ImmortalWrt 主线云编译仓库，GitHub Actions 
 
 ```
 Config/
-  RK3528-ZERO2-FULL.txt   # 设备平台 + 分区 + 代理插件
+  RK3528-ZERO2-FULL.txt   # 设备平台 + 分区 + Open-Box 依赖 + 无线裁剪
   GENERAL.txt             # 通用软件包集合
 Scripts/
   Inject-ZERO2.sh         # 注入 board.d 网口/LED 映射
