@@ -1,0 +1,173 @@
+#!/bin/sh /etc/rc.common
+# Zero2: 把磁盘剩余空间做成大分区挂 /opt, 并把预置的 Open-Box 组件铺到 /opt/open-box
+#
+# 移植自 R28S 的 opt 方案(target-patch/opt-partition/r28s-opt-partition.init),
+# 变更点:
+#   1) Open-Box 组件不再是运行时下载, 而是编译期预置在 /usr/share/open-box-bundle/
+#      → 分区就绪后直接从 bundle 复制到 /opt/open-box, 全程离线
+#   2) 复制后自建 init.d 服务 + LuCI 入口文件(不调用 Open-Box 官方 install.sh,
+#      因为它检测到 /opt/open-box 已存在会拒绝安装)
+#
+# 两段式原因(与 R28S 同): 运行中的系统盘新建分区后内核拒绝重读分区表(Resource busy),
+# 必须 reboot 一次. 故第1次启动写分区表+reboot, 第2次启动 mkfs+挂载+铺 Open-Box.
+# uci-defaults 只首启跑一次, 做不到两段式, 故用 init.d.
+
+START=99
+BUNDLE="/usr/share/open-box-bundle"
+INSTALL_ROOT="/opt/open-box"
+
+start() {
+	for c in sfdisk mkfs.ext4 blkid lsblk uci; do
+		command -v "$c" >/dev/null 2>&1 || { logger -t zero2-opt "missing $c, skip"; return 0; }
+	done
+
+	# /opt 已是独立分区挂载点则跳过(幂等)
+	if awk '$2=="/opt"{f=1}END{exit !f}' /proc/mounts 2>/dev/null; then
+		openbox_deploy_if_needed
+		return 0
+	fi
+	if uci -q show fstab | grep -q "\.target='\/opt'" && findmnt -n /opt >/dev/null 2>&1; then
+		openbox_deploy_if_needed
+		return 0
+	fi
+
+	# 找系统盘
+	local ROMPART DISK
+	ROMPART=$(lsblk -nr -o PATH,MOUNTPOINT | awk '$2=="/rom"{print $1; exit}')
+	case "$ROMPART" in
+	/dev/mmcblk*p*) DISK="${ROMPART%p*}" ;;
+	*)
+		DISK=""
+		for d in /dev/mmcblk0 /dev/mmcblk1 /dev/mmcblk2; do
+			[ -b "${d}p2" ] && { DISK="$d"; break; }
+		done
+		;;
+	esac
+	[ -b "$DISK" ] || { logger -t zero2-opt "system disk not found, skip"; return 0; }
+
+	local PART
+	PART=$(blkid -L opt 2>/dev/null)
+	if [ -z "$PART" ]; then
+		local LASTNUM NEWPART MAXSTART
+		LASTNUM=$(lsblk -nr -o NAME "$DISK" | grep -oE 'p[0-9]+$' | tr -d 'p' | sort -n | tail -1)
+		[ -z "$LASTNUM" ] && { logger -t zero2-opt "no partition, skip"; return 0; }
+		NEWPART=$((LASTNUM + 1))
+		PART="${DISK}p${NEWPART}"
+		if [ ! -b "$PART" ]; then
+			MAXSTART=$(sfdisk -F "$DISK" 2>/dev/null | awk '/^ *[0-9]+ +[0-9]+ +[0-9]+/{print $1, $3}' | sort -k2 -n | tail -1 | awk '{print $1}')
+			[ -z "$MAXSTART" ] && { logger -t zero2-opt "no free space, skip"; return 0; }
+			logger -t zero2-opt "create $PART from sector $MAXSTART"
+			echo "${MAXSTART},,L," | sfdisk -a --force --no-reread "$DISK" 2>&1 | logger -t zero2-opt
+			sync
+			if [ ! -b "$PART" ]; then
+				logger -t zero2-opt "partition written, reboot to recognize $PART"
+				sleep 2
+				reboot
+				return 0
+			fi
+		fi
+	fi
+
+	[ -b "$PART" ] || { logger -t zero2-opt "$PART not present, abort"; return 0; }
+
+	local FS UUID
+	FS=$(blkid -o value -s TYPE "$PART" 2>/dev/null)
+	if [ "$FS" != "ext4" ]; then
+		logger -t zero2-opt "mkfs.ext4 on $PART"
+		mkfs.ext4 -F -L opt "$PART" 2>&1 | logger -t zero2-opt
+		sync
+	fi
+
+	UUID=$(blkid -o value -s UUID "$PART" 2>/dev/null)
+	[ -z "$UUID" ] && { logger -t zero2-opt "no UUID for $PART, abort"; return 0; }
+
+	mkdir -p /opt
+	uci set fstab.@global[0].anon_mount='0'
+	uci set fstab.@global[0].anon_swap='0'
+	while uci -q del fstab.@mount[-1]; do true; done
+	uci add fstab mount
+	uci set fstab.@mount[-1].target="/opt"
+	uci set fstab.@mount[-1].uuid="$UUID"
+	uci set fstab.@mount[-1].enabled="1"
+	uci commit fstab
+	for m in /mnt/mmcblk0p1 /mnt/mmcblk0p3 /mnt/mmcblk1p1 /mnt/mmcblk1p3 /mnt/mmcblk2p1 /mnt/mmcblk2p3; do
+		umount "$m" 2>/dev/null
+		findmnt -n "$m" >/dev/null 2>&1 || rmdir "$m" 2>/dev/null
+	done
+
+	mount -t ext4 -o noatime "UUID=$UUID" /opt 2>&1 | logger -t zero2-opt || \
+		mount "$PART" /opt 2>&1 | logger -t zero2-opt
+	logger -t zero2-opt "$PART ($UUID) mounted at /opt"
+
+	openbox_deploy_if_needed
+	return 0
+}
+
+# 把编译期预置的 bundle 铺到 /opt/open-box(幂等: 已装过则跳过)
+# 动作对齐 Open-Box 官方 install.sh 的安装段(见 install.sh 第 1145-1185 行):
+#   1) 组件解包 -> /opt/open-box
+#   2) init.d 服务文件 -> /etc/init.d/
+#   3) LuCI 前端 js -> /www/luci-static/resources/view/openbox/
+#   4) LuCI menu/acl -> /usr/share/luci/menu.d、/usr/share/rpcd/acl.d
+#   5) CLI 软链 -> /usr/bin/open-box
+#   6) data/panel-port 写默认端口(3036)
+# 注: 不跑官方 install.sh, 因其检测到 /opt/open-box 已存在会拒绝安装
+openbox_deploy_if_needed() {
+	[ -d "$BUNDLE" ] || { logger -t zero2-opt "no bundle at $BUNDLE, skip"; return 0; }
+
+	# 已部署过则跳过
+	if [ -x "$INSTALL_ROOT/openwrt/bin/open-box" ] && [ -f /etc/init.d/openbox ]; then
+		return 0
+	fi
+
+	logger -t zero2-opt "deploy Open-Box from bundle"
+	mkdir -p "$INSTALL_ROOT"
+	cp -a "$BUNDLE"/. "$INSTALL_ROOT"/
+	chown -R 0:0 "$INSTALL_ROOT" 2>/dev/null
+
+	# --- init.d 服务 ---
+	if [ -d "$INSTALL_ROOT/openwrt/initd" ]; then
+		for s in openbox openbox-panel; do
+			if [ -f "$INSTALL_ROOT/openwrt/initd/$s" ]; then
+				cp -f "$INSTALL_ROOT/openwrt/initd/$s" "/etc/init.d/$s"
+				chmod 0755 "/etc/init.d/$s"
+			fi
+		done
+	fi
+
+	# --- LuCI 前端资源 ---
+	if [ -d "$INSTALL_ROOT/openwrt/luci/htdocs/luci-static/resources/view/openbox" ]; then
+		mkdir -p /www/luci-static/resources/view/openbox
+		cp -f "$INSTALL_ROOT/openwrt/luci/htdocs/luci-static/resources/view/openbox/"*.js \
+			/www/luci-static/resources/view/openbox/ 2>/dev/null
+	fi
+
+	# --- LuCI menu / acl ---
+	if [ -f "$INSTALL_ROOT/openwrt/luci/root/usr/share/luci/menu.d/luci-app-openbox.json" ]; then
+		mkdir -p /usr/share/luci/menu.d
+		cp -f "$INSTALL_ROOT/openwrt/luci/root/usr/share/luci/menu.d/luci-app-openbox.json" \
+			/usr/share/luci/menu.d/
+	fi
+	if [ -f "$INSTALL_ROOT/openwrt/luci/root/usr/share/rpcd/acl.d/luci-app-openbox.json" ]; then
+		mkdir -p /usr/share/rpcd/acl.d
+		cp -f "$INSTALL_ROOT/openwrt/luci/root/usr/share/rpcd/acl.d/luci-app-openbox.json" \
+			/usr/share/rpcd/acl.d/
+	fi
+
+	# --- CLI 软链 ---
+	if [ -f "$INSTALL_ROOT/openwrt/bin/open-box" ]; then
+		chmod 0755 "$INSTALL_ROOT/openwrt/bin/open-box"
+		ln -sf "$INSTALL_ROOT/openwrt/bin/open-box" /usr/bin/open-box
+	fi
+
+	# --- data 与默认端口 ---
+	mkdir -p "$INSTALL_ROOT/data"
+	[ -f "$INSTALL_ROOT/data/panel-port" ] || echo "3036" > "$INSTALL_ROOT/data/panel-port"
+
+	# 清 LuCI 缓存并重启 rpcd, 否则 ACL 不立即生效(官方 install.sh 同款处理)
+	rm -rf /tmp/luci-*cache* 2>/dev/null
+	/etc/init.d/rpcd restart >/dev/null 2>&1
+
+	logger -t zero2-opt "Open-Box deployed to $INSTALL_ROOT (panel port 3036)"
+	return 0
+}
