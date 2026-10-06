@@ -116,7 +116,13 @@ fi
 
 #Rockchip 平台调整 (NanoPi Zero2, RK3528A)
 if [[ "${WRT_TARGET^^}" == *"ROCKCHIP"* ]]; then
-	#注入 Zero2 的 board.d 网口/LED 映射(设备定义与 DTS 上游已原生支持, 无需注入)
+	#1) 预置 Open-Box 组件包(下载 + SHA256 校验 + 解包进 rootfs 的 bundle 目录)
+	#   必须在 Inject-ZERO2.sh 之前跑: 注入脚本只处理 board.d 与 init.d, bundle 由本步准备
+	if [ -f "$GITHUB_WORKSPACE/Scripts/Fetch-OpenBox.sh" ]; then
+		bash "$GITHUB_WORKSPACE/Scripts/Fetch-OpenBox.sh"
+	fi
+	#2) 注入 Zero2 的 board.d 网口/LED 映射 + /opt 分区与 Open-Box 部署 init.d
+	#   (设备定义与 DTS 上游已原生支持, 无需注入)
 	if [ -f "$GITHUB_WORKSPACE/Scripts/Inject-ZERO2.sh" ]; then
 		bash "$GITHUB_WORKSPACE/Scripts/Inject-ZERO2.sh"
 	fi
