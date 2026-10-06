@@ -24,8 +24,9 @@ NanoPi Zero2（RK3528A）的 ImmortalWrt 主线云编译仓库，GitHub Actions 
 - **U-Boot**：主线 `nanopi-zero2-rk3528`，**在 Linux 启动前释放 RGMII PHY 复位**
   （这是千兆网能工作的前提；官方 wiki 的 u-boot 2017.09 反而是老路子）
 - **代理**：**Open-Box**（[liandu2024/Open-Box](https://github.com/liandu2024/Open-Box)，sing-box 一体化方案）
-  - Open-Box **不是编译期软件包**，面板 + sing-box 内核 + Node 运行时由安装脚本自带
-  - 固件侧只预置运行依赖：`kmod-tun` `kmod-veth` `kmod-nft-nat` `kmod-nft-queue` `kmod-nf-nathelper` `ip-full` `ca-bundle`
+  - **编译期预置**四个组件（app/runtime/kernel/geo，约 75MB），刷完即用、无需联网
+  - 组件下载 + SHA256 校验见 `Scripts/Fetch-OpenBox.sh`
+  - 首启自动建 `/opt` 分区并部署，见 `target-patch/zero2-opt-openbox.init`
   - 固件**不含** passwall / xray / iStore
 - **无线**：**不编任何 WiFi 驱动**（Zero2 的 M.2 Key-E 不接模块）
 - **形态**：**旁路由**（相关设置需自行配置，固件不预置）
@@ -64,23 +65,45 @@ NanoPi Zero2（RK3528A）的 ImmortalWrt 主线云编译仓库，GitHub Actions 
   └─ SoC 内部固化协议，任何存储写坏都能救
 ```
 
-## 安装 Open-Box
+## Open-Box（已集成，无需手动安装）
 
-刷完固件后，SSH 以 root 登录路由器执行：
+**Open-Box 组件已预置在固件内，刷完即用，无需联网。**
 
-```sh
-curl -fsSL https://raw.githubusercontent.com/liandu2024/Open-Box/main/scripts/install.sh | sh
+四个组件（app / runtime / kernel / geo，约 75MB）在编译期下载、SHA256 校验后
+打包进 rootfs 的 `/usr/share/open-box-bundle/`。
+
+### 首次启动自动部署
+
+路由器**第一次开机**会自动：
+
+```
+① 在系统盘剩余空间新建分区，格式化为 ext4，挂载到 /opt
+② 重启一次（内核需重读分区表）
+③ 第二次开机：把 bundle 铺到 /opt/open-box，装好 init.d 服务与 LuCI 入口
 ```
 
-国内网络不畅时用镜像：
+> 首次开机因涉及新分区识别，会**自动重启一次**，属正常现象。
 
-```sh
-curl -fsSL https://gh-proxy.com/raw.githubusercontent.com/liandu2024/Open-Box/main/scripts/install.sh | sh -s -- --mirror
-```
+### 使用
 
-- 安装时会问面板端口，默认 **3036**（回车即可）
-- 完成后浏览器打开 `http://<路由器IP>:3036`，首次访问设置面板密码
+- 浏览器打开 `http://<路由器IP>:3036`，**首次访问设置面板密码**
+- LuCI 里也有入口：服务 → Open-Box（面板打不开时可在此启停/恢复直连）
 - 忘记密码：SSH 执行 `open-box` 选 `1`，或直接 `open-box password`
+
+### 关于升级
+
+固件内置的是打包时的版本（当前 `v0.1.287`）。
+Open-Box 自身升级走它自己的通道，不影响固件：
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/liandu2024/Open-Box/main/scripts/update.sh | sh
+```
+
+### 为什么不用官方 install.sh
+
+官方脚本检测到 `/opt/open-box` 已存在会**拒绝安装**，而 `/opt` 是运行时挂载的
+独立分区，编译期写入的内容会被覆盖。因此采用「预置到 rootfs bundle → 首启铺到 /opt」
+的方式绕开该限制。
 
 ## ⚠️ 旁路由必读
 
