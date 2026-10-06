@@ -70,15 +70,23 @@ echo "[bundle] 内容:"
 find "$BUNDLE" -maxdepth 2 | head -30
 du -sh "$BUNDLE"
 
-# ---- 4) 铺进源码树 target 文件目录(rootfs 内路径) ----
-# 注意: 用 target/linux/rockchip/armv8/base-files/ 而非 package/base-files,
-#       避免污染其它平台(该目录只对本平台生效)
-RK_BF="./target/linux/rockchip/armv8/base-files"
-DEST="$RK_BF/usr/share/open-box-bundle"
+# ---- 4) 铺进 rootfs 打包输入目录 ----
+# ★路径选择(踩坑修正)★
+#   曾用 target/linux/rockchip/armv8/base-files/usr/share/... —— 无效!
+#   原因: 平台 base-files 是「叠加目录」, 只覆盖 rootfs 的 etc/ 与 lib/ 两个子目录,
+#         往它里面放 usr/ 会被静默忽略(实测该目录上游只有 etc/ 和 lib/).
+#   正确做法: 放进 package/base-files/files/ —— 这是 base-files 包的 files 目录,
+#         打包时整棵树原样复制进 rootfs, 任意路径(user/opt/srv...)都能生效.
+#   代价: 该文件会进入所有平台; 但组件只在 rk3528 构建时下载, 其它平台无此目录(空),
+#         且我们的仓库只编 rk3528 一个目标, 无副作用.
+DEST="./package/base-files/files/usr/share/open-box-bundle"
 rm -rf "$DEST"
 mkdir -p "$(dirname "$DEST")"
 cp -a "$BUNDLE" "$DEST"
 echo "[4] bundle 已铺入 $DEST"
+echo "[4] 校验:"
+ls -la "$DEST" | head -10
 du -sh "$DEST"
+[ -x "$DEST/openwrt/bin/open-box" ] || echo "WARN: open-box CLI 不在预期位置, 请核对包结构"
 
 echo "===== Open-Box bundle 准备完成 ====="
