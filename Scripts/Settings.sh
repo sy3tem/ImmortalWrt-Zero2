@@ -41,22 +41,19 @@ echo "default timezone set to Asia/Shanghai (CST-8)!"
 echo 'root:$1$4C5K7.$KQSzgarR6TWvov9ZTlKPS0:0:0:99999:7:::' > ./package/base-files/files/etc/shadow
 echo "default root password set to 'password'!"
 
-#首启脚本: 修 iStore/taskd + 清理无效 apk 源
-#1) /var/log/tasks 目录: taskd(iStore 装包执行器) 日志目录, /var 是 tmpfs 重启清空.
-#   缺失时 task_add 写日志失败 → iStore 装包卡死(用户实测装包把系统搞挂的根因).
-#2) 删掉 snapshots 官方不存在的 video 源(404), 避免 apk update 每次对它空等超时.
+#首启脚本: 清理无效 apk 源
+#iStore(应用商店)已按需求从固件移除, 其 taskd 日志目录修复段落一并删除.
+#保留: 删掉 snapshots 官方不存在的 video 源(404), 避免 apk update 每次对它空等超时.
 UDIR="./package/base-files/files/etc/uci-defaults"
 mkdir -p "$UDIR"
-cat > "$UDIR/99-fix-istore-taskd" <<'EOF'
+cat > "$UDIR/99-fix-distfeeds" <<'EOF'
 #!/bin/sh
-# 每次首启确保 taskd 日志目录存在(iStore 装包依赖)
-mkdir -p /var/log/tasks
 # 删掉 apk 源里 404 的 video feed(官方 snapshots 无此目录, 留着只会让 update 空等)
 sed -i '\#/aarch64_generic/video/packages.adb#d' /etc/apk/repositories.d/distfeeds.list 2>/dev/null
 exit 0
 EOF
-chmod +x "$UDIR/99-fix-istore-taskd"
-echo "uci-defaults 99-fix-istore-taskd installed!"
+chmod +x "$UDIR/99-fix-distfeeds"
+echo "uci-defaults 99-fix-distfeeds installed!"
 
 #首启脚本: IPv6 relay 模式(逐字照抄 OpenWrt 官方 wiki 的 "IPv6 relay" 配置)
 #背景: 上级光猫是 ISP 桥接 ONT, 只给 WAN 单个 /64、不下发 DHCPv6-PD 前缀.
@@ -98,7 +95,7 @@ echo "CONFIG_PACKAGE_luci-theme-$WRT_THEME=y" >> ./.config
 #apk软件源(snapshots 滚动版)
 #★2026-09-28 实测: 国内镜像对 snapshots 全部不可用——清华/USTC/阿里/腾讯 404,
 #  SJTU 有但把 packages.adb 302 重定向到 mirrors.zju.edu.cn(浙大), 而浙大仅 ~6KB/s 巨慢,
-#  GNU wget 跟随重定向后卡死(每源等 60s 超时), 导致 apk update/iStore 装包巨慢甚至卡死.
+#  GNU wget 跟随重定向后卡死(每源等 60s 超时), 导致 apk update 巨慢甚至卡死.
 #  反而官方源 downloads.immortalwrt.org 走 Cloudflare CDN 最快(148KB/s, update 15 秒).
 #  故 snapshots 直接用官方源, 不用国内镜像.
 #VERSION_REPO 是编译变量, 写进 /etc/apk/repositories.d/distfeeds.list
@@ -116,6 +113,13 @@ fi
 
 #Rockchip 平台调整 (NanoPi Zero2, RK3528A)
 if [[ "${WRT_TARGET^^}" == *"ROCKCHIP"* ]]; then
+	#0) 修正产物文件名里的 wifi 标记
+	#   WRT-CORE.yml 第 95 行硬编码 WRT_WIFI=wifi-yes 只用于拼文件名, 与实际编译内容无关.
+	#   Zero2 是旁路由版本, 配置里已禁用全部 WiFi 驱动(kmod-cfg80211/mac80211/rtw88/wpad/wifi-scripts),
+	#   若沿用默认 wifi-yes, 下载到的文件名会误导使用者. 故此平台覆写为 wifi-no.
+	echo "WRT_WIFI=wifi-no" >> $GITHUB_ENV
+	echo "rockchip: 产物标记设为 wifi-no (旁路由, 无无线驱动)!"
+
 	#1) 预置 Open-Box 组件包(下载 + SHA256 校验 + 解包进 rootfs 的 bundle 目录)
 	#   必须在 Inject-ZERO2.sh 之前跑: 注入脚本只处理 board.d 与 init.d, bundle 由本步准备
 	if [ -f "$GITHUB_WORKSPACE/Scripts/Fetch-OpenBox.sh" ]; then
