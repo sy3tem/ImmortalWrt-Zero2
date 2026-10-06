@@ -20,8 +20,10 @@ jobs:
         uses: ophub/delete-releases-workflows@main
         with:
           gh_token: ${{secrets.GITHUB_TOKEN}}
+          #保留最近 3 个 Release(原值 0 = 全删; 编译产物凌晨 6 点前编好会被误删, 用户来不及下载)
           delete_releases: true
-          releases_keep_latest: 0
+          releases_keep_latest: 3
           delete_tags: true
+          #保留 7 天 workflow 记录(原值 0 = 全删; 失败时看不到日志, 排障困难)
           delete_workflows: true
-          workflows_keep_day: 0
+          workflows_keep_day: 7
