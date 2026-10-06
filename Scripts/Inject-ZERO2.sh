@@ -96,4 +96,21 @@ EOF
 chmod +x "$UDIR/99-zero2-clean-mount"
 echo "[3] uci-defaults clean-mount installed"
 
+# ---- 4) /opt 大分区 + Open-Box 部署 init.d ----
+# 移植 R28S 的 opt 方案: 首启新建分区占满剩余空间, ext4, 挂 /opt.
+# 本版增加: 分区就绪后把编译期预置的 Open-Box 组件(bundle)铺到 /opt/open-box.
+# 两段式(写分区表 -> reboot -> mkfs+挂载+铺组件), 原因见脚本内注释.
+OPT_SRC="$GITHUB_WORKSPACE/target-patch/zero2-opt-openbox.init"
+INITD="$RK_DIR/armv8/base-files/etc/init.d"
+RCD="$RK_DIR/armv8/base-files/etc/rc.d"
+if [ -f "$OPT_SRC" ]; then
+	mkdir -p "$INITD" "$RCD"
+	cp -f "$OPT_SRC" "$INITD/zero2-opt-openbox"
+	chmod +x "$INITD/zero2-opt-openbox"
+	ln -sf ../init.d/zero2-opt-openbox "$RCD/S99zero2-opt-openbox"
+	echo "[4] /opt partition + Open-Box deploy init.d installed"
+else
+	echo "[4] opt-openbox init script not found, skip"
+fi
+
 echo "===== Inject done ====="
